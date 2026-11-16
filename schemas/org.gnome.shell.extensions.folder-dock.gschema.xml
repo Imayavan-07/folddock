@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.folder-dock" path="/org/gnome/shell/extensions/folder-dock/">
+    <key name="icon-size" type="i">
+      <range min="24" max="96"/>
+      <default>40</default>
+      <summary>App icon size in pixels</summary>
+    </key>
+    <key name="bottom-margin" type="i">
+      <range min="0" max="48"/>
+      <default>4</default>
+      <summary>Gap between the dock and the bottom of the screen</summary>
+    </key>
+    <key name="background-opacity" type="d">
+      <range min="0.0" max="1.0"/>
+      <default>0.8</default>
+      <summary>Dock background opacity</summary>
+    </key>
+    <key name="autohide-mode" type="s">
+      <choices>
+        <choice value="never"/>
+        <choice value="intellihide"/>
+        <choice value="always"/>
+      </choices>
+      <default>'intellihide'</default>
+      <summary>When to hide the dock</summary>
+    </key>
+    <key name="pressure-threshold" type="i">
+      <range min="0" max="300"/>
+      <default>100</default>
+      <summary>Pointer push needed at the bottom edge to reveal the dock</summary>
+    </key>
+    <key name="show-running" type="b">
+      <default>true</default>
+      <summary>Show running apps that are not pinned</summary>
+    </key>
+    <key name="show-apps-button" type="b">
+      <default>true</default>
+      <summary>Show the app grid button</summary>
+    </key>
+    <key name="show-apps-position" type="s">
+      <choices>
+        <choice value="start"/>
+        <choice value="end"/>
+      </choices>
+      <default>'end'</default>
+      <summary>Where the app grid button goes</summary>
+    </key>
+    <key name="launch-animation" type="s">
+      <choices>
+        <choice value="bounce"/>
+        <choice value="zoom"/>
+        <choice value="pulse"/>
+        <choice value="none"/>
+      </choices>
+      <default>'bounce'</default>
+      <summary>App launch animation style</summary>
+    </key>
+  </schema>
+</schemalist>

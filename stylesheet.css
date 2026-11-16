@@ -51,3 +51,11 @@
 .folder-dock .show-apps:hover .overview-icon,
 .folder-dock .show-apps:checked .overview-icon { background-color: transparent; }
 .folder-dock .show-apps .show-apps-icon { color: #ffffff; }
+
+/* Translucent Folder Popup */
+.folder-dock-popup-menu .popup-menu-content {
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    padding: 4px;
+}

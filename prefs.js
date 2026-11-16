@@ -16,7 +16,6 @@ function switchRow(settings, key, title, subtitle) {
     return row;
 }
 
-// ComboRow bound to a string key with fixed choices.
 function choiceRow(settings, key, title, subtitle, choices) {
     const row = new Adw.ComboRow({
         title,
@@ -41,8 +40,8 @@ function choiceRow(settings, key, title, subtitle, choices) {
 export default class FolderDockPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings('org.gnome.shell.extensions.folder-dock');
-        window._settings = settings;   // keep alive with the window
-        window.set_default_size(560, 640);
+        window._settings = settings;
+        window.set_default_size(560, 680);
 
         const page = new Adw.PreferencesPage({
             title: 'Folder Dock',
@@ -51,28 +50,28 @@ export default class FolderDockPreferences extends ExtensionPreferences {
 
         const look = new Adw.PreferencesGroup({title: 'Appearance'});
         look.add(spinRow(settings, 'icon-size', 'Icon size', 'App icon size in pixels', 24, 96, 2));
-        look.add(spinRow(settings, 'bottom-margin', 'Bottom gap',
-            'Space between the dock and the screen edge', 0, 48));
-        look.add(spinRow(settings, 'background-opacity', 'Background opacity',
-            '0 is fully transparent, 1 is solid', 0, 1, 0.05, 2));
+        look.add(spinRow(settings, 'bottom-margin', 'Bottom gap', 'Space between the dock and the screen edge', 0, 48));
+        look.add(spinRow(settings, 'background-opacity', 'Background opacity', '0 is fully transparent, 1 is solid (applies to dock and folder popups)', 0, 1, 0.05, 2));
         page.add(look);
 
         const behaviour = new Adw.PreferencesGroup({title: 'Behaviour'});
-        behaviour.add(choiceRow(settings, 'autohide-mode', 'Auto-hide',
-            'When the dock slides out of the way', [
-                ['never', 'Never — always visible'],
-                ['intellihide', 'When a window overlaps it'],
-                ['always', 'Always'],
-            ]));
-        behaviour.add(spinRow(settings, 'pressure-threshold', 'Reveal pressure',
-            'How hard to push the pointer against the bottom edge (0 = instant)', 0, 300, 10));
+        behaviour.add(choiceRow(settings, 'launch-animation', 'Launch animation', 'Animation played when launching or focusing an app', [
+            ['bounce', 'Bounce (Dash-to-Dock)'],
+            ['zoom', 'Zoom Pop'],
+            ['pulse', 'Pulse / Glow'],
+            ['none', 'None (Disabled)'],
+        ]));
+        behaviour.add(choiceRow(settings, 'autohide-mode', 'Auto-hide', 'When the dock slides out of the way', [
+            ['never', 'Never — always visible'],
+            ['intellihide', 'When a window overlaps it'],
+            ['always', 'Always'],
+        ]));
+        behaviour.add(spinRow(settings, 'pressure-threshold', 'Reveal pressure', 'How hard to push the pointer against the bottom edge (0 = instant)', 0, 300, 10));
         page.add(behaviour);
 
         const content = new Adw.PreferencesGroup({title: 'Content'});
-        content.add(switchRow(settings, 'show-running', 'Show running apps',
-            'Open apps that aren’t pinned appear after a divider'));
-        content.add(switchRow(settings, 'show-apps-button', 'Show Apps button',
-            'Button that opens the app grid'));
+        content.add(switchRow(settings, 'show-running', 'Show running apps', 'Open apps that aren’t pinned appear after a divider'));
+        content.add(switchRow(settings, 'show-apps-button', 'Show Apps button', 'Button that opens the app grid'));
         content.add(choiceRow(settings, 'show-apps-position', 'Show Apps button position', '', [
             ['start', 'Left end'],
             ['end', 'Right end'],
