@@ -1,0 +1,15 @@
+{
+  "uuid": "folder-dock@local",
+  "name": "Folder Dock",
+  "description": "A sleek, responsive dock for GNOME Shell featuring mobile-style app folders, smart autohide, and smooth workspace integration.\n\nKey Highlights:\n• Mobile-Style App Folders: Bundle multiple applications directly on your dock with live 2×2 mini-icon previews.\n• Intuitive Drag-and-Drop: Drop one app onto another to instantly create a folder, or drag apps into existing folders.\n• Seamless Folder Management: Click to open a smooth popup grid; right-click for quick renaming, unbundling, or unpinning.\n• Intelligent Autohide (Intellihide): Keeps your screen clear by tucking the dock away whenever windows overlap it, with instant bottom-edge pressure reveal.\n• Window & Running Indicators: Multi-dot indicators show open windows at a glance, with middle-click new window launching and single-click window cycling.\n• Native GNOME Sync: Keeps your pinned favorites two-way synced with GNOME's native favorite-apps.\n• Fully Customizable: Personalize icon sizing, dock margins, background opacity, autohide behavior, and app grid button placement.",
+  "url": "https://github.com/Imayavan-07/folddock.git",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49"
+  ],
+  "settings-schema": "org.gnome.shell.extensions.folder-dock",
+  "version": 1
+}
