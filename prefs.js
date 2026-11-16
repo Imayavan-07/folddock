@@ -49,32 +49,37 @@ export default class FolderDockPreferences extends ExtensionPreferences {
         });
 
         const look = new Adw.PreferencesGroup({title: 'Appearance'});
-        look.add(spinRow(settings, 'icon-size', 'Icon size', 'App icon size in pixels', 24, 96, 2));
-        look.add(spinRow(settings, 'bottom-margin', 'Bottom gap', 'Space between the dock and the screen edge', 0, 48));
-        look.add(spinRow(settings, 'background-opacity', 'Background opacity', '0 is fully transparent, 1 is solid (applies to dock and folder popups)', 0, 1, 0.05, 2));
+        look.add(choiceRow(settings, 'dock-position', 'Position on screen', 'Which edge of your screen the dock sits on', [
+            ['bottom', 'Bottom edge'],
+            ['left', 'Left edge'],
+            ['right', 'Right edge'],
+        ]));
+        look.add(spinRow(settings, 'icon-size', 'Icon size', 'Make app icons larger or smaller', 24, 96, 2));
+        look.add(spinRow(settings, 'bottom-margin', 'Screen edge gap', 'Space between the dock and your screen border', 0, 48));
+        look.add(spinRow(settings, 'background-opacity', 'Dock transparency', '0 is completely clear glass, 1 is solid dark', 0, 1, 0.05, 2));
         page.add(look);
 
-        const behaviour = new Adw.PreferencesGroup({title: 'Behaviour'});
-        behaviour.add(choiceRow(settings, 'launch-animation', 'Launch animation', 'Animation played when launching or focusing an app', [
-            ['bounce', 'Bounce (Dash-to-Dock)'],
-            ['zoom', 'Zoom Pop'],
-            ['pulse', 'Pulse / Glow'],
-            ['none', 'None (Disabled)'],
+        const behaviour = new Adw.PreferencesGroup({title: 'Behavior'});
+        behaviour.add(choiceRow(settings, 'launch-animation', 'App click animation', 'What happens when you click an app to open it', [
+            ['bounce', 'Bounce (Dash-to-Dock style)'],
+            ['zoom', 'Pop zoom'],
+            ['pulse', 'Gentle pulse'],
+            ['none', 'None (instant launch)'],
         ]));
-        behaviour.add(choiceRow(settings, 'autohide-mode', 'Auto-hide', 'When the dock slides out of the way', [
+        behaviour.add(choiceRow(settings, 'autohide-mode', 'Hide the dock', 'Choose when the dock tucks out of view', [
             ['never', 'Never — always visible'],
-            ['intellihide', 'When a window overlaps it'],
-            ['always', 'Always'],
+            ['intellihide', 'Smart — hide only when a window is in the way'],
+            ['always', 'Always — hide until your mouse touches the edge'],
         ]));
-        behaviour.add(spinRow(settings, 'pressure-threshold', 'Reveal pressure', 'How hard to push the pointer against the bottom edge (0 = instant)', 0, 300, 10));
+        behaviour.add(spinRow(settings, 'pressure-threshold', 'Edge push to reveal', 'How firmly to push your mouse against the edge to bring the dock back (0 = instant)', 0, 300, 10));
         page.add(behaviour);
 
-        const content = new Adw.PreferencesGroup({title: 'Content'});
-        content.add(switchRow(settings, 'show-running', 'Show running apps', 'Open apps that aren’t pinned appear after a divider'));
-        content.add(switchRow(settings, 'show-apps-button', 'Show Apps button', 'Button that opens the app grid'));
-        content.add(choiceRow(settings, 'show-apps-position', 'Show Apps button position', '', [
-            ['start', 'Left end'],
-            ['end', 'Right end'],
+        const content = new Adw.PreferencesGroup({title: 'Dock Items'});
+        content.add(switchRow(settings, 'show-running', 'Show unpinned active apps', 'Keep open apps visible on the dock even if you have not pinned them'));
+        content.add(switchRow(settings, 'show-apps-button', 'Show all apps button', 'Show the 9-dot icon that opens your full application list'));
+        content.add(choiceRow(settings, 'show-apps-position', 'All apps button placement', 'Put the 9-dot icon at the start or end of the dock', [
+            ['start', 'Start of dock'],
+            ['end', 'End of dock'],
         ]));
         page.add(content);
 

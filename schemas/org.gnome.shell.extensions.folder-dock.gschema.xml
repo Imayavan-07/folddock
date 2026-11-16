@@ -1,20 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.folder-dock" path="/org/gnome/shell/extensions/folder-dock/">
+    <key name="dock-position" type="s">
+      <choices>
+        <choice value="bottom"/>
+        <choice value="left"/>
+        <choice value="right"/>
+      </choices>
+      <default>'bottom'</default>
+      <summary>Where to place the dock on screen (bottom, left, or right)</summary>
+    </key>
     <key name="icon-size" type="i">
       <range min="24" max="96"/>
       <default>40</default>
-      <summary>App icon size in pixels</summary>
+      <summary>Size of app icons</summary>
     </key>
     <key name="bottom-margin" type="i">
       <range min="0" max="48"/>
       <default>4</default>
-      <summary>Gap between the dock and the bottom of the screen</summary>
+      <summary>Space between the dock and screen edge</summary>
     </key>
     <key name="background-opacity" type="d">
       <range min="0.0" max="1.0"/>
       <default>0.8</default>
-      <summary>Dock background opacity</summary>
+      <summary>Transparency of dock and folder popups</summary>
     </key>
     <key name="autohide-mode" type="s">
       <choices>
@@ -28,15 +37,15 @@
     <key name="pressure-threshold" type="i">
       <range min="0" max="300"/>
       <default>100</default>
-      <summary>Pointer push needed at the bottom edge to reveal the dock</summary>
+      <summary>How hard to push your mouse at the edge to show the dock</summary>
     </key>
     <key name="show-running" type="b">
       <default>true</default>
-      <summary>Show running apps that are not pinned</summary>
+      <summary>Show open apps that are not pinned to the dock</summary>
     </key>
     <key name="show-apps-button" type="b">
       <default>true</default>
-      <summary>Show the app grid button</summary>
+      <summary>Show the 9-dot all apps button</summary>
     </key>
     <key name="show-apps-position" type="s">
       <choices>
@@ -44,7 +53,7 @@
         <choice value="end"/>
       </choices>
       <default>'end'</default>
-      <summary>Where the app grid button goes</summary>
+      <summary>Where the all apps button sits (start or end of dock)</summary>
     </key>
     <key name="launch-animation" type="s">
       <choices>
@@ -54,7 +63,7 @@
         <choice value="none"/>
       </choices>
       <default>'bounce'</default>
-      <summary>App launch animation style</summary>
+      <summary>Animation played when clicking an app icon</summary>
     </key>
   </schema>
 </schemalist>

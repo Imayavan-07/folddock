@@ -79,7 +79,7 @@ class LayoutStore {
 const FolderDock = GObject.registerClass(
     class FolderDock extends St.BoxLayout {
         _init(store, settings, callbacks) {
-            super._init({ style_class: 'folder-dock', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.END, reactive: true, track_hover: true });
+            super._init({ style_class: 'folder-dock', reactive: true, track_hover: true });
             this._delegate = this;
             this._store = store;
             this._settings = settings;
@@ -98,6 +98,7 @@ const FolderDock = GObject.registerClass(
             ];
             this._dragMonitor = { dragMotion: e => (!e.targetActor || !this.contains(e.targetActor)) && this._clearHighlight() || DND.DragMotionResult.CONTINUE };
             this.connect('destroy', () => this.destroy());
+            this.updatePosition();
         }
         destroy() {
             if (this._menuIdleId) {
@@ -130,6 +131,32 @@ const FolderDock = GObject.registerClass(
                 try { o.disconnect(id); } catch {}
             });
             this._dockSignals = [];
+        }
+        get _position() { return this._settings.get_string('dock-position'); }
+        get _isVertical() { return this._position === 'left' || this._position === 'right'; }
+        get _menuSide() {
+            const p = this._position;
+            return p === 'left' ? St.Side.LEFT : (p === 'right' ? St.Side.RIGHT : St.Side.BOTTOM);
+        }
+        _itemPivot() {
+            const p = this._position;
+            if (p === 'left') return [0.0, 0.5];
+            if (p === 'right') return [1.0, 0.5];
+            return [0.5, 1.0];
+        }
+        updatePosition() {
+            const p = this._position;
+            if (this._isVertical) {
+                'orientation' in this ? (this.orientation = Clutter.Orientation.VERTICAL) : (this.vertical = true);
+                this.add_style_class_name('folder-dock-vertical');
+                this.x_align = p === 'left' ? Clutter.ActorAlign.START : Clutter.ActorAlign.END;
+                this.y_align = Clutter.ActorAlign.CENTER;
+            } else {
+                'orientation' in this ? (this.orientation = Clutter.Orientation.HORIZONTAL) : (this.vertical = false);
+                this.remove_style_class_name('folder-dock-vertical');
+                this.x_align = Clutter.ActorAlign.CENTER;
+                this.y_align = Clutter.ActorAlign.END;
+            }
         }
         get _iconSize() { return this._settings.get_int('icon-size'); }
         get _previewSize() { return Math.max(8, Math.round(this._iconSize / 3)); }
@@ -179,7 +206,7 @@ const FolderDock = GObject.registerClass(
                     child: new St.Icon({ icon_name: 'view-app-grid-symbolic', icon_size: this._iconSize, style_class: 'show-apps-icon' }),
                 });
             }
-            item.set_pivot_point(0.5, 1.0);
+            item.set_pivot_point(...this._itemPivot());
             this._connect(button, 'clicked', () => {
                 this._animateLaunch(button);
                 this._toggleAppGrid(button);
@@ -253,7 +280,7 @@ const FolderDock = GObject.registerClass(
             const app = lookupApp(id);
             if (!app) return null;
             const btn = new St.Button({ style_class: 'dock-item', button_mask: St.ButtonMask.ONE | St.ButtonMask.TWO, track_hover: true });
-            btn.set_pivot_point(0.5, 1.0);
+            btn.set_pivot_point(...this._itemPivot());
             btn.set_child(this._withDots(app.create_icon_texture(this._iconSize), [id], btn));
             this._connect(btn, 'clicked', (_b, c) => {
                 this._animateLaunch(btn);
@@ -278,7 +305,7 @@ const FolderDock = GObject.registerClass(
         }
         _buildFolder(folder) {
             const btn = new St.Button({ style_class: 'dock-item', button_mask: St.ButtonMask.ONE, track_hover: true });
-            btn.set_pivot_point(0.5, 1.0);
+            btn.set_pivot_point(...this._itemPivot());
             btn.set_child(this._withDots(this._buildPreview(folder), folder.apps, btn));
             this._connect(btn, 'clicked', () => {
                 this._animateLaunch(btn);
@@ -294,25 +321,31 @@ const FolderDock = GObject.registerClass(
             if (style === 'none') return;
             const target = button.get_child() ?? button;
             target.remove_all_transitions();
+            target.translation_x = 0;
+            target.translation_y = 0;
             if (style === 'bounce') {
-                target.set_pivot_point(0.5, 1.0);
+                target.set_pivot_point(...this._itemPivot());
+                const p = this._position, isVert = this._isVertical;
+                const axis = isVert ? 'translation_x' : 'translation_y';
+                const sign = p === 'left' ? 1 : -1;
+                const d1 = sign * 16, d2 = sign * 8;
                 target.ease({
-                    translation_y: -16,
+                    [axis]: d1,
                     duration: 140,
                     mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                     onComplete: () => {
                         target.ease({
-                            translation_y: 0,
+                            [axis]: 0,
                             duration: 120,
                             mode: Clutter.AnimationMode.EASE_IN_QUAD,
                             onComplete: () => {
                                 target.ease({
-                                    translation_y: -8,
+                                    [axis]: d2,
                                     duration: 100,
                                     mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                                     onComplete: () => {
                                         target.ease({
-                                            translation_y: 0,
+                                            [axis]: 0,
                                             duration: 90,
                                             mode: Clutter.AnimationMode.EASE_IN_QUAD,
                                         });
@@ -377,9 +410,22 @@ const FolderDock = GObject.registerClass(
             const l = this._label, a = this._labelActor;
             if (!l?.visible || !a?.get_stage()) return;
             const ext = a.get_transformed_extents(), [, lw] = l.get_preferred_width(-1), [, lh] = l.get_preferred_height(lw), m = Main.layoutManager.primaryMonitor;
-            let lx = Math.floor(ext.origin.x + (ext.size.width - lw) / 2);
-            if (m) lx = Math.max(m.x, Math.min(lx, m.x + m.width - lw));
-            l.set_position(lx, Math.floor(ext.origin.y - lh - TOOLTIP_GAP));
+            const p = this._position;
+            let lx, ly;
+            if (p === 'left') {
+                lx = Math.floor(ext.origin.x + ext.size.width + TOOLTIP_GAP);
+                ly = Math.floor(ext.origin.y + (ext.size.height - lh) / 2);
+                if (m) ly = Math.max(m.y, Math.min(ly, m.y + m.height - lh));
+            } else if (p === 'right') {
+                lx = Math.floor(ext.origin.x - lw - TOOLTIP_GAP);
+                ly = Math.floor(ext.origin.y + (ext.size.height - lh) / 2);
+                if (m) ly = Math.max(m.y, Math.min(ly, m.y + m.height - lh));
+            } else {
+                lx = Math.floor(ext.origin.x + (ext.size.width - lw) / 2);
+                if (m) lx = Math.max(m.x, Math.min(lx, m.x + m.width - lw));
+                ly = Math.floor(ext.origin.y - lh - TOOLTIP_GAP);
+            }
+            l.set_position(lx, ly);
         }
         hideLabel() {
             this._labelActor = null;
@@ -405,29 +451,34 @@ const FolderDock = GObject.registerClass(
             this._highlighted = null;
         }
         _sourceInfo(s) { return s?.dockFolder ? { folder: s.dockFolder } : (s?.app instanceof Shell.App ? { id: s.app.get_id() } : null); }
-        _dropTarget(info, x) {
+        _dropTarget(info, coord) {
+            const isVert = this._isVertical;
             for (const entry of this._entries.filter(e => e.item)) {
                 const b = entry.actor.get_allocation_box();
-                if (x < b.x1) return { entry, mode: 'before' };
-                if (x <= b.x2) {
-                    const f = (x - b.x1) / Math.max(1, b.x2 - b.x1), it = entry.item;
+                const p1 = isVert ? b.y1 : b.x1;
+                const p2 = isVert ? b.y2 : b.x2;
+                if (coord < p1) return { entry, mode: 'before' };
+                if (coord <= p2) {
+                    const f = (coord - p1) / Math.max(1, p2 - p1), it = entry.item;
                     return { entry, mode: (info.id && (it.type === 'folder' || it.id !== info.id) && f > 0.25 && f < 0.75) ? 'into' : (f < 0.5 ? 'before' : 'after') };
                 }
             }
             return { entry: null, mode: 'end' };
         }
-        handleDragOver(source, _actor, x) {
+        handleDragOver(source, _actor, x, y) {
             const info = this._sourceInfo(source);
             if (!info) return DND.DragMotionResult.NO_DROP;
-            const target = this._dropTarget(info, x);
+            const coord = this._isVertical ? y : x;
+            const target = this._dropTarget(info, coord);
             this._clearHighlight();
             if (target.entry) (this._highlighted = target.entry.actor).add_style_pseudo_class(`drop-${target.mode}`);
             return source.dockSource ? DND.DragMotionResult.MOVE_DROP : DND.DragMotionResult.COPY_DROP;
         }
-        acceptDrop(source, _actor, x) {
+        acceptDrop(source, _actor, x, y) {
             const info = this._sourceInfo(source);
             if (!info) return false;
-            const target = this._dropTarget(info, x);
+            const coord = this._isVertical ? y : x;
+            const target = this._dropTarget(info, coord);
             this._clearHighlight();
             if (this._dropIdleId) GLib.source_remove(this._dropIdleId);
             this._dropIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -480,7 +531,7 @@ const FolderDock = GObject.registerClass(
             return menu;
         }
         _makeMenu(source) {
-            const menu = this._registerMenu(new PopupMenu.PopupMenu(source, 0.5, St.Side.BOTTOM));
+            const menu = this._registerMenu(new PopupMenu.PopupMenu(source, 0.5, this._menuSide));
             menu.box.add_style_class_name('folder-dock-popup-menu');
             const o = this._settings.get_double('background-opacity').toFixed(2);
             menu.box.set_style(`background-color: rgba(30, 30, 34, ${o});`);
@@ -497,7 +548,7 @@ const FolderDock = GObject.registerClass(
             const id = app.get_id();
             let menu;
             try {
-                (menu = new AppMenu(source, St.Side.BOTTOM, { favoritesSection: true, showSingleWindows: true })).setApp(app);
+                (menu = new AppMenu(source, this._menuSide, { favoritesSection: true, showSingleWindows: true })).setApp(app);
                 this._registerMenu(menu);
             } catch {
                 menu = this._makeMenu(source);
@@ -603,7 +654,9 @@ export default class FolderDockExtension extends Extension {
         });
         this._edge = new St.Widget({ reactive: true, track_hover: true, height: 1, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.END, visible: false });
         this._container = new St.Widget({ layout_manager: new Clutter.BinLayout(), clip_to_allocation: true });
-        this._dock.margin_bottom = this._margin;
+        this._dock.updatePosition();
+        this._updateEdgeLayout();
+        this._applyMargin();
         this._applyOpacity();
         this._container.add_child(this._edge);
         this._container.add_child(this._dock);
@@ -705,15 +758,73 @@ export default class FolderDockExtension extends Extension {
         this._store = null;
         this._settings = null;
     }
-    _containerHeight() { return Math.ceil(this._dock.get_preferred_height(-1)[1]) + this._margin + SHADOW_PAD; }
+    get _position() { return this._settings.get_string('dock-position'); }
+    get _isVertical() { return this._position === 'left' || this._position === 'right'; }
     get _margin() { return this._settings.get_int('bottom-margin'); }
+    _containerBreadth() {
+        if (!this._dock) return 0;
+        return (this._isVertical
+            ? Math.ceil(this._dock.get_preferred_width(-1)[1])
+            : Math.ceil(this._dock.get_preferred_height(-1)[1])) + this._margin + SHADOW_PAD;
+    }
+    _containerHeight() { return this._containerBreadth(); }
+    _applyMargin() {
+        if (!this._dock) return;
+        this._dock.margin_bottom = 0;
+        this._dock.margin_left = 0;
+        this._dock.margin_right = 0;
+        this._dock.margin_top = 0;
+        const p = this._position;
+        if (p === 'left') this._dock.margin_left = this._margin;
+        else if (p === 'right') this._dock.margin_right = this._margin;
+        else this._dock.margin_bottom = this._margin;
+    }
+    _updateEdgeLayout() {
+        if (!this._edge) return;
+        const p = this._position;
+        if (p === 'left') {
+            this._edge.x_align = Clutter.ActorAlign.START;
+            this._edge.y_align = Clutter.ActorAlign.CENTER;
+            this._edge.width = 1;
+        } else if (p === 'right') {
+            this._edge.x_align = Clutter.ActorAlign.END;
+            this._edge.y_align = Clutter.ActorAlign.CENTER;
+            this._edge.width = 1;
+        } else {
+            this._edge.x_align = Clutter.ActorAlign.CENTER;
+            this._edge.y_align = Clutter.ActorAlign.END;
+            this._edge.height = 1;
+        }
+    }
     _applyOpacity() { this._dock.set_style(`background-color: rgba(30, 30, 34, ${this._settings.get_double('background-opacity').toFixed(2)});`); }
     _onSettingsChanged(key) {
-        if (['icon-size', 'show-running', 'show-apps-button', 'show-apps-position'].includes(key)) { this._dock.rebuild(); this._updateGeometry(); }
-        else if (key === 'bottom-margin') { this._dock.margin_bottom = this._margin; this._updateGeometry(); }
-        else if (key === 'background-opacity') this._applyOpacity();
-        else if (key === 'pressure-threshold') { this._removeBarrier(); this._pressure?.destroy(); this._pressure = null; this._setupBarrier(); }
-        else if (key === 'autohide-mode') this._queueSync(0);
+        if (key === 'dock-position') {
+            this._dock.updatePosition();
+            this._updateEdgeLayout();
+            this._applyMargin();
+            this._dock.remove_all_transitions();
+            this._dock.translation_x = 0;
+            this._dock.translation_y = 0;
+            this._updateGeometry();
+            this._setupBarrier();
+            this._dock.rebuild();
+            this._queueSync(0);
+        } else if (['icon-size', 'show-running', 'show-apps-button', 'show-apps-position'].includes(key)) {
+            this._dock.rebuild();
+            this._updateGeometry();
+        } else if (key === 'bottom-margin') {
+            this._applyMargin();
+            this._updateGeometry();
+        } else if (key === 'background-opacity') {
+            this._applyOpacity();
+        } else if (key === 'pressure-threshold') {
+            this._removeBarrier();
+            this._pressure?.destroy();
+            this._pressure = null;
+            this._setupBarrier();
+        } else if (key === 'autohide-mode') {
+            this._queueSync(0);
+        }
     }
     _connect(obj, sig, fn) { this._signals.push([obj, obj.connect(sig, fn)]); }
     _onFavoritesChanged() {
@@ -729,15 +840,36 @@ export default class FolderDockExtension extends Extension {
     }
     _updateGeometry() {
         const m = Main.layoutManager.primaryMonitor;
-        if (!this._container || !m) return;
-        const h = this._containerHeight(), y = m.y + m.height - h;
-        if (this._container.x !== m.x || this._container.y !== y) this._container.set_position(m.x, y);
-        if (this._container.width !== m.width || this._container.height !== h) this._container.set_size(m.width, h);
+        if (!this._container || !m || !this._dock) return;
+        const b = this._containerBreadth();
+        const p = this._position;
+        let x = m.x, y = m.y, w = m.width, h = m.height;
+        if (p === 'left') {
+            w = b;
+        } else if (p === 'right') {
+            x = m.x + m.width - b;
+            w = b;
+        } else {
+            y = m.y + m.height - b;
+            h = b;
+        }
+        if (this._container.x !== x || this._container.y !== y) this._container.set_position(x, y);
+        if (this._container.width !== w || this._container.height !== h) this._container.set_size(w, h);
     }
     _onDockAllocated() {
-        const w = Math.max(1, Math.round(this._dock.width));
-        if (this._edge.width !== w) this._edge.width = w;
-        if (this._containerHeight() !== this._container.height) this._updateGeometry();
+        if (!this._edge || !this._dock || !this._container) return;
+        if (this._isVertical) {
+            const h = Math.max(1, Math.round(this._dock.height));
+            if (this._edge.height !== h) this._edge.height = h;
+            if (this._edge.width !== 1) this._edge.width = 1;
+        } else {
+            const w = Math.max(1, Math.round(this._dock.width));
+            if (this._edge.width !== w) this._edge.width = w;
+            if (this._edge.height !== 1) this._edge.height = 1;
+        }
+        if (this._containerBreadth() !== (this._isVertical ? this._container.width : this._container.height)) {
+            this._updateGeometry();
+        }
     }
     _setupBarrier() {
         this._removeBarrier();
@@ -748,8 +880,16 @@ export default class FolderDockExtension extends Extension {
                 this._pressure = new Layout.PressureBarrier(this._settings.get_int('pressure-threshold'), PRESSURE_TIMEOUT, Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW);
                 this._pressureSignalId = this._pressure.connect('trigger', () => this._onPressure());
             }
-            const p = { x1: m.x, x2: m.x + m.width, y1: m.y + m.height, y2: m.y + m.height, directions: Meta.BarrierDirection.NEGATIVE_Y };
-            try { this._barrier = new Meta.Barrier({ backend: global.backend, ...p }); } catch { this._barrier = new Meta.Barrier({ display: global.display, ...p }); }
+            const p = this._position;
+            let bParams;
+            if (p === 'left') {
+                bParams = { x1: m.x, x2: m.x, y1: m.y, y2: m.y + m.height, directions: Meta.BarrierDirection.POSITIVE_X };
+            } else if (p === 'right') {
+                bParams = { x1: m.x + m.width, x2: m.x + m.width, y1: m.y, y2: m.y + m.height, directions: Meta.BarrierDirection.NEGATIVE_X };
+            } else {
+                bParams = { x1: m.x, x2: m.x + m.width, y1: m.y + m.height, y2: m.y + m.height, directions: Meta.BarrierDirection.NEGATIVE_Y };
+            }
+            try { this._barrier = new Meta.Barrier({ backend: global.backend, ...bParams }); } catch { this._barrier = new Meta.Barrier({ display: global.display, ...bParams }); }
             this._pressure.addBarrier(this._barrier);
             this._edge.hide();
         } catch (e) {
@@ -770,8 +910,13 @@ export default class FolderDockExtension extends Extension {
         this._queueSync(0);
         if (!this._revealPollId) {
             this._revealPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-                const [, py] = global.get_pointer();
-                if (this._container && py >= this._container.y) return GLib.SOURCE_CONTINUE;
+                const [px, py] = global.get_pointer();
+                if (this._container) {
+                    const p = this._position;
+                    if (p === 'left' && px <= this._container.x + this._container.width) return GLib.SOURCE_CONTINUE;
+                    if (p === 'right' && px >= this._container.x) return GLib.SOURCE_CONTINUE;
+                    if (p === 'bottom' && py >= this._container.y) return GLib.SOURCE_CONTINUE;
+                }
                 this._pressureReveal = false;
                 this._revealPollId = 0;
                 this._queueSync(HIDE_DELAY_MS);
@@ -812,12 +957,30 @@ export default class FolderDockExtension extends Extension {
         this._shown = show;
         const dock = this._dock;
         dock.remove_all_transitions();
+        const p = this._position;
+        const isVert = this._isVertical;
+        const axis = isVert ? 'translation_x' : 'translation_y';
         if (show) {
             dock.show();
-            dock.ease({ translation_y: 0, duration: ANIM_MS, mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => Main.layoutManager._queueUpdateRegions?.() });
+            dock.ease({
+                translation_x: 0,
+                translation_y: 0,
+                duration: ANIM_MS,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => Main.layoutManager._queueUpdateRegions?.(),
+            });
         } else {
             dock.hideLabel();
-            dock.ease({ translation_y: this._container.height, duration: ANIM_MS, mode: Clutter.AnimationMode.EASE_IN_QUAD, onComplete: () => { if (!this._shown) this._dock.hide(); Main.layoutManager._queueUpdateRegions?.(); } });
+            const offset = p === 'left' ? -this._container.width : (p === 'right' ? this._container.width : this._container.height);
+            dock.ease({
+                [axis]: offset,
+                duration: ANIM_MS,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                onComplete: () => {
+                    if (!this._shown) this._dock.hide();
+                    Main.layoutManager._queueUpdateRegions?.();
+                },
+            });
         }
     }
     _hideOverviewDash() {
