@@ -39,17 +39,32 @@ class LayoutStore {
         this._file = Gio.File.new_for_path(GLib.build_filenamev([this._dir, 'layout.json']));
         this.items = [];
     }
-    load() {
-        if (this._file.query_exists(null)) {
-            try { this.items = JSON.parse(new TextDecoder().decode(this._file.load_contents(null)[1])); return; }
-            catch (e) { logError(e, 'folder-dock: layout.json unreadable, reseeding from favorites'); }
+    load(callback) {
+        if (!this._file.query_exists(null)) {
+            this.items = global.settings.get_strv('favorite-apps').map(id => ({ type: 'app', id }));
+            this.save();
+            callback?.();
+            return;
         }
-        this.items = global.settings.get_strv('favorite-apps').map(id => ({ type: 'app', id }));
-        this.save();
+        this._file.load_contents_async(null, (file, res) => {
+            try {
+                const [, contents] = file.load_contents_finish(res);
+                this.items = JSON.parse(new TextDecoder().decode(contents));
+            } catch (e) {
+                logError(e, 'folder-dock: layout.json unreadable, reseeding from favorites');
+                this.items = global.settings.get_strv('favorite-apps').map(id => ({ type: 'app', id }));
+            }
+            callback?.();
+        });
     }
     save() {
-        GLib.mkdir_with_parents(this._dir, 0o755);
-        this._file.replace_contents(new TextEncoder().encode(JSON.stringify(this.items, null, 2)), null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        try {
+            GLib.mkdir_with_parents(this._dir, 0o755);
+            const bytes = new GLib.Bytes(new TextEncoder().encode(JSON.stringify(this.items, null, 2)));
+            this._file.replace_contents_bytes_async(bytes, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null, null);
+        } catch (e) {
+            logError(e, 'folder-dock: failed to save layout.json');
+        }
     }
     flatIds() { return this.items.flatMap(i => i.type === 'folder' ? i.apps : i.id); }
     reconcile(favorites) {
@@ -71,8 +86,10 @@ const FolderDock = GObject.registerClass(
             this._cb = callbacks;
             this.menuOpen = this.dragging = false;
             this._menuManager = new PopupMenu.PopupMenuManager(this);
-            this._menus = []; this._dotUpdaters = []; this._appSignals = []; this._entries = []; this._runningOrder = []; this._renderedRunning = [];
+            this._menus = []; this._dotUpdaters = []; this._dockSignals = []; this._entries = []; this._runningOrder = []; this._renderedRunning = [];
             this._label = this._highlighted = null;
+            this._menuIdleId = 0;
+            this._dropIdleId = 0;
             const appSys = Shell.AppSystem.get_default(), tracker = Shell.WindowTracker.get_default();
             this._globalSignals = [
                 [appSys, appSys.connect('app-state-changed', () => this._onAppStateChanged())],
@@ -80,17 +97,39 @@ const FolderDock = GObject.registerClass(
                 [tracker, tracker.connect('notify::focus-app', () => this._updateDots())],
             ];
             this._dragMonitor = { dragMotion: e => (!e.targetActor || !this.contains(e.targetActor)) && this._clearHighlight() || DND.DragMotionResult.CONTINUE };
-
-            this.connect('destroy', () => {
-                this._globalSignals.forEach(([o, id]) => o.disconnect(id));
-                this._globalSignals = [];
-                this._disconnectAppSignals();
-                DND.removeDragMonitor(this._dragMonitor);
-                [...this._menus].forEach(m => m.destroy());
-                this._menus = [];
-                this._label?.destroy();
-                this._label = null;
+            this.connect('destroy', () => this.destroy());
+        }
+        destroy() {
+            if (this._menuIdleId) {
+                GLib.source_remove(this._menuIdleId);
+                this._menuIdleId = 0;
+            }
+            if (this._dropIdleId) {
+                GLib.source_remove(this._dropIdleId);
+                this._dropIdleId = 0;
+            }
+            this._globalSignals.forEach(([o, id]) => {
+                try { o.disconnect(id); } catch {}
             });
+            this._globalSignals = [];
+            this._disconnectDockSignals();
+            DND.removeDragMonitor(this._dragMonitor);
+            [...this._menus].forEach(m => m.destroy());
+            this._menus = [];
+            this._label?.destroy();
+            this._label = null;
+            super.destroy();
+        }
+        _connect(obj, sig, fn) {
+            const id = obj.connect(sig, fn);
+            this._dockSignals.push([obj, id]);
+            return id;
+        }
+        _disconnectDockSignals() {
+            this._dockSignals.forEach(([o, id]) => {
+                try { o.disconnect(id); } catch {}
+            });
+            this._dockSignals = [];
         }
         get _iconSize() { return this._settings.get_int('icon-size'); }
         get _previewSize() { return Math.max(8, Math.round(this._iconSize / 3)); }
@@ -105,7 +144,7 @@ const FolderDock = GObject.registerClass(
             this.hideLabel();
             this._clearHighlight();
             this._dotUpdaters = [];
-            this._disconnectAppSignals();
+            this._disconnectDockSignals();
             this._entries = [];
             this.destroy_all_children();
             const showApps = this._settings.get_boolean('show-apps-button'), atStart = this._settings.get_string('show-apps-position') === 'start';
@@ -122,6 +161,7 @@ const FolderDock = GObject.registerClass(
                 for (const [id, actor] of actors) { this.add_child(actor); this._entries.push({ actor, runningId: id }); }
             }
             if (showApps && !atStart) this._addShowAppsButton(false);
+            this._updateDots();
         }
         _addShowAppsButton(atStart) {
             let item, button;
@@ -140,13 +180,13 @@ const FolderDock = GObject.registerClass(
                 });
             }
             item.set_pivot_point(0.5, 1.0);
-            button.connect('clicked', () => {
+            this._connect(button, 'clicked', () => {
                 this._animateLaunch(button);
                 this._toggleAppGrid(button);
             });
-            this._appSignals.push([Main.overview, Main.overview.connect('hidden', () => { button.checked = this._fromDesktop = false; })]);
+            this._connect(Main.overview, 'hidden', () => { button.checked = this._fromDesktop = false; });
             const stock = findStockDash()?.showAppsButton;
-            if (stock) this._appSignals.push([stock, stock.connect('notify::checked', () => { button.checked = stock.checked; })]);
+            if (stock) this._connect(stock, 'notify::checked', () => { button.checked = stock.checked; });
             this._attachTooltip(button, () => 'Show Apps');
             if (!atStart && this.get_n_children() > 0 && !this._entries.at(-1)?.separator) this.add_child(new St.Widget({ style_class: 'dock-separator' }));
             this.add_child(item);
@@ -179,7 +219,6 @@ const FolderDock = GObject.registerClass(
             if (this._computeRunning().join('\n') !== this._renderedRunning.join('\n')) this.rebuild();
             else this._updateDots();
         }
-        _disconnectAppSignals() { this._appSignals.forEach(([o, id]) => o.disconnect(id)); this._appSignals = []; }
         _updateDots() { this._dotUpdaters.forEach(u => u()); }
         _withDots(child, ids, button) {
             const box = vbox({ style_class: 'dock-item-box' }), dots = new St.BoxLayout({ style_class: 'dock-dots', x_align: Clutter.ActorAlign.CENTER });
@@ -187,7 +226,7 @@ const FolderDock = GObject.registerClass(
             box.add_child(dots);
             for (const id of ids) {
                 const app = lookupApp(id);
-                if (app) this._appSignals.push([app, app.connect('windows-changed', () => this._updateDots())]);
+                if (app) this._connect(app, 'windows-changed', () => this._updateDots());
             }
             const update = () => {
                 const app = ids.length === 1 ? lookupApp(ids[0]) : null;
@@ -200,15 +239,15 @@ const FolderDock = GObject.registerClass(
                 button[focusId && ids.includes(focusId) ? 'add_style_pseudo_class' : 'remove_style_pseudo_class']('focused');
             };
             this._dotUpdaters.push(update);
-            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => (this._dotUpdaters.includes(update) && update(), GLib.SOURCE_REMOVE));
+            update();
             return box;
         }
         _makeDraggable(btn, delegate) {
             btn._delegate = delegate;
             const d = DND.makeDraggable(btn);
-            d.connect('drag-begin', () => this._dragBegin());
-            d.connect('drag-cancelled', () => this._dragEnd());
-            d.connect('drag-end', () => this._dragEnd());
+            this._connect(d, 'drag-begin', () => this._dragBegin());
+            this._connect(d, 'drag-cancelled', () => this._dragEnd());
+            this._connect(d, 'drag-end', () => this._dragEnd());
         }
         _buildApp(id, pinned) {
             const app = lookupApp(id);
@@ -216,11 +255,11 @@ const FolderDock = GObject.registerClass(
             const btn = new St.Button({ style_class: 'dock-item', button_mask: St.ButtonMask.ONE | St.ButtonMask.TWO, track_hover: true });
             btn.set_pivot_point(0.5, 1.0);
             btn.set_child(this._withDots(app.create_icon_texture(this._iconSize), [id], btn));
-            btn.connect('clicked', (_b, c) => {
+            this._connect(btn, 'clicked', (_b, c) => {
                 this._animateLaunch(btn);
                 c === Clutter.BUTTON_MIDDLE && app.can_open_new_window() ? app.open_new_window(-1) : this._activateApp(app);
             });
-            btn.connect('button-press-event', (_a, e) => e.get_button() === Clutter.BUTTON_SECONDARY ? (this._openAppMenu(btn, app, pinned), Clutter.EVENT_STOP) : Clutter.EVENT_PROPAGATE);
+            this._connect(btn, 'button-press-event', (_a, e) => e.get_button() === Clutter.BUTTON_SECONDARY ? (this._openAppMenu(btn, app, pinned), Clutter.EVENT_STOP) : Clutter.EVENT_PROPAGATE);
             this._attachTooltip(btn, () => app.get_name());
             this._makeDraggable(btn, { app, dockSource: true, getDragActor: () => app.create_icon_texture(this._iconSize), getDragActorSource: () => btn });
             return btn;
@@ -241,11 +280,11 @@ const FolderDock = GObject.registerClass(
             const btn = new St.Button({ style_class: 'dock-item', button_mask: St.ButtonMask.ONE, track_hover: true });
             btn.set_pivot_point(0.5, 1.0);
             btn.set_child(this._withDots(this._buildPreview(folder), folder.apps, btn));
-            btn.connect('clicked', () => {
+            this._connect(btn, 'clicked', () => {
                 this._animateLaunch(btn);
                 this._openFolderMenu(btn, folder);
             });
-            btn.connect('button-press-event', (_a, e) => e.get_button() === Clutter.BUTTON_SECONDARY ? (this._openFolderContextMenu(btn, folder), Clutter.EVENT_STOP) : Clutter.EVENT_PROPAGATE);
+            this._connect(btn, 'button-press-event', (_a, e) => e.get_button() === Clutter.BUTTON_SECONDARY ? (this._openFolderContextMenu(btn, folder), Clutter.EVENT_STOP) : Clutter.EVENT_PROPAGATE);
             this._attachTooltip(btn, () => folder.name);
             this._makeDraggable(btn, { dockFolder: folder, dockSource: true, getDragActor: () => this._buildPreview(folder), getDragActorSource: () => btn });
             return btn;
@@ -321,8 +360,8 @@ const FolderDock = GObject.registerClass(
             else Main.activateWindow(wins.at(-1));
         }
         _attachTooltip(btn, getText) {
-            btn.connect('notify::hover', () => (btn.hover && !this.menuOpen && !this.dragging) ? this._showLabel(btn, getText()) : this.hideLabel());
-            btn.connect('clicked', () => this.hideLabel());
+            this._connect(btn, 'notify::hover', () => (btn.hover && !this.menuOpen && !this.dragging) ? this._showLabel(btn, getText()) : this.hideLabel());
+            this._connect(btn, 'clicked', () => this.hideLabel());
         }
         _showLabel(actor, text) {
             if (!this._label) Main.uiGroup.add_child(this._label = new St.Label({ style_class: 'folder-dock-label' }));
@@ -390,7 +429,12 @@ const FolderDock = GObject.registerClass(
             if (!info) return false;
             const target = this._dropTarget(info, x);
             this._clearHighlight();
-            GLib.idle_add(GLib.PRIORITY_DEFAULT, () => (this._applyDrop(info, target), GLib.SOURCE_REMOVE));
+            if (this._dropIdleId) GLib.source_remove(this._dropIdleId);
+            this._dropIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                this._dropIdleId = 0;
+                this._applyDrop(info, target);
+                return GLib.SOURCE_REMOVE;
+            });
             return true;
         }
         _applyDrop(info, target) {
@@ -421,10 +465,17 @@ const FolderDock = GObject.registerClass(
             if (!menu.actor.get_parent()) Main.uiGroup.add_child(menu.actor);
             this._menuManager.addMenu(menu);
             this._menus.push(menu);
-            menu.connect('destroy', () => { this._menus = this._menus.filter(m => m !== menu); this._setMenuOpen(false); });
-            menu.connect('open-state-changed', (_m, open) => {
+            this._connect(menu, 'destroy', () => { this._menus = this._menus.filter(m => m !== menu); this._setMenuOpen(false); });
+            this._connect(menu, 'open-state-changed', (_m, open) => {
                 this._setMenuOpen(open);
-                if (!open) GLib.idle_add(GLib.PRIORITY_DEFAULT, () => (this._menus.includes(menu) && menu.destroy(), GLib.SOURCE_REMOVE));
+                if (!open) {
+                    if (this._menuIdleId) GLib.source_remove(this._menuIdleId);
+                    this._menuIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                        this._menuIdleId = 0;
+                        if (this._menus.includes(menu)) menu.destroy();
+                        return GLib.SOURCE_REMOVE;
+                    });
+                }
             });
             return menu;
         }
@@ -489,7 +540,7 @@ const FolderDock = GObject.registerClass(
             box.add_child(new St.Widget({ style_class: 'dock-running-dot', x_align: Clutter.ActorAlign.CENTER, opacity: isRunning(id) ? 255 : 0 }));
             box.add_child(new St.Label({ text: app.get_name(), style_class: 'folder-app-label' }));
             const btn = new St.Button({ style_class: 'folder-app', child: box, button_mask: St.ButtonMask.ONE | St.ButtonMask.TWO });
-            btn.connect('clicked', (_b, c) => {
+            this._connect(btn, 'clicked', (_b, c) => {
                 this._animateLaunch(btn);
                 menu.close();
                 c === Clutter.BUTTON_MIDDLE && app.can_open_new_window() ? app.open_new_window(-1) : this._activateApp(app);
@@ -519,7 +570,11 @@ const FolderDock = GObject.registerClass(
             dialog.contentLayout.add_child(entry);
             const submit = () => { const name = entry.get_text().trim(); dialog.close(); if (name) onOk(name); };
             dialog.setButtons([{ label: 'Cancel', action: () => dialog.close() }, { label: 'OK', default: true, action: submit }]);
-            entry.clutter_text.connect('activate', submit);
+            const actId = entry.clutter_text.connect('activate', submit);
+            const closeId = dialog.connect('closed', () => {
+                entry.clutter_text.disconnect(actId);
+                dialog.disconnect(closeId);
+            });
             dialog.open();
             global.stage.set_key_focus(entry);
             entry.clutter_text.set_selection(0, -1);
@@ -536,10 +591,11 @@ export default class FolderDockExtension extends Extension {
         this._windowSignals = new Map();
         this._shown = true;
         this._pressureReveal = false;
+        this._syncId = 0;
+        this._revealPollId = 0;
+        this._pressureSignalId = 0;
         this._store = new LayoutStore();
-        this._store.load();
-        this._store.reconcile(global.settings.get_strv('favorite-apps'));
-        this._store.save();
+        this._store.items = global.settings.get_strv('favorite-apps').map(id => ({ type: 'app', id }));
         this._settings = this.getSettings('org.gnome.shell.extensions.folder-dock');
         this._dock = new FolderDock(this._store, this._settings, {
             onChanged: () => { this._writeFavorites(); this._updateGeometry(); },
@@ -581,27 +637,73 @@ export default class FolderDockExtension extends Extension {
         this._writeFavorites();
         this._updateGeometry();
         this._setupBarrier();
+        this._store.load(() => {
+            if (!this._dock) return;
+            if (this._store.reconcile(global.settings.get_strv('favorite-apps'))) this._store.save();
+            this._dock.rebuild();
+            this._writeFavorites();
+            this._updateGeometry();
+        });
         log(`folder-dock: enabled with ${this._store.items.length} items`);
         this._hideOverviewDash();
         this._queueSync(0);
     }
     disable() {
-        ['_syncId', '_revealPollId'].forEach(p => this[p] && (GLib.source_remove(this[p]), this[p] = 0));
-        (this._signals ?? []).forEach(([o, id]) => o.disconnect(id));
+        if (this._syncId) {
+            GLib.source_remove(this._syncId);
+            this._syncId = 0;
+        }
+        if (this._revealPollId) {
+            GLib.source_remove(this._revealPollId);
+            this._revealPollId = 0;
+        }
+        if (this._dock?._menuIdleId) {
+            GLib.source_remove(this._dock._menuIdleId);
+            this._dock._menuIdleId = 0;
+        }
+        if (this._menuIdleId) {
+            GLib.source_remove(this._menuIdleId);
+            this._menuIdleId = 0;
+        }
+        if (this._dock?._dropIdleId) {
+            GLib.source_remove(this._dock._dropIdleId);
+            this._dock._dropIdleId = 0;
+        }
+        (this._signals ?? []).forEach(([o, id]) => {
+            try { o.disconnect(id); } catch {}
+        });
         this._signals = [];
-        (this._windowSignals ?? new Map()).forEach((ids, win) => ids.forEach(id => win.disconnect(id)));
+        (this._windowSignals ?? new Map()).forEach((ids, win) => ids.forEach(id => {
+            try { win.disconnect(id); } catch {}
+        }));
         this._windowSignals?.clear();
         this._removeBarrier();
-        this._pressure?.destroy();
-        this._pressure = null;
+        if (this._pressure) {
+            if (this._pressureSignalId) {
+                this._pressure.disconnect(this._pressureSignalId);
+                this._pressureSignalId = 0;
+            }
+            this._pressure.destroy();
+            this._pressure = null;
+        }
         this._restoreOverviewDash();
+        if (this._edge) {
+            Main.layoutManager.untrackChrome(this._edge);
+            this._edge.destroy();
+        }
+        if (this._dock) {
+            Main.layoutManager.untrackChrome(this._dock);
+            this._dock.destroy();
+        }
         if (this._container) {
-            if (this._dock) Main.layoutManager.untrackChrome(this._dock);
-            if (this._edge) Main.layoutManager.untrackChrome(this._edge);
             Main.layoutManager.removeChrome(this._container);
             this._container.destroy();
-        } else { this._dock?.destroy(); }
-        this._container = this._dock = this._edge = this._store = this._settings = null;
+        }
+        this._container = null;
+        this._dock = null;
+        this._edge = null;
+        this._store = null;
+        this._settings = null;
     }
     _containerHeight() { return Math.ceil(this._dock.get_preferred_height(-1)[1]) + this._margin + SHADOW_PAD; }
     get _margin() { return this._settings.get_int('bottom-margin'); }
@@ -644,7 +746,7 @@ export default class FolderDockExtension extends Extension {
         try {
             if (!this._pressure) {
                 this._pressure = new Layout.PressureBarrier(this._settings.get_int('pressure-threshold'), PRESSURE_TIMEOUT, Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW);
-                this._pressure.connect('trigger', () => this._onPressure());
+                this._pressureSignalId = this._pressure.connect('trigger', () => this._onPressure());
             }
             const p = { x1: m.x, x2: m.x + m.width, y1: m.y + m.height, y2: m.y + m.height, directions: Meta.BarrierDirection.NEGATIVE_Y };
             try { this._barrier = new Meta.Barrier({ backend: global.backend, ...p }); } catch { this._barrier = new Meta.Barrier({ display: global.display, ...p }); }
@@ -658,6 +760,10 @@ export default class FolderDockExtension extends Extension {
     }
     _removeBarrier() {
         if (this._barrier) { this._pressure?.removeBarrier(this._barrier); this._barrier.destroy?.(); this._barrier = null; }
+        if (this._pressure && this._pressureSignalId) {
+            this._pressure.disconnect(this._pressureSignalId);
+            this._pressureSignalId = 0;
+        }
     }
     _onPressure() {
         this._pressureReveal = true;
